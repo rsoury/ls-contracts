@@ -39,6 +39,7 @@ specifiers:
   hardhat-gas-reporter: ^1.0.9
   lodash.snakecase: ^4.1.1
   mocha: ^10.2.0
+  prettier: ^2.8.4
   prettier-plugin-solidity: ^1.1.2
   solhint: ^3.3.8
   solhint-plugin-prettier: ^0.0.5
@@ -79,7 +80,7 @@ devDependencies:
   eslint-import-resolver-typescript: 3.5.3_mvgyw3chnqkp6sgfmmtihyjpnm
   eslint-plugin-import: 2.27.5_rqjqogzte5mdcpd2pm24wlvzku
   eslint-plugin-jest: 27.2.1_7kw3g6rralp5ps6mg3uyzz6azm
-  eslint-plugin-prettier: 4.2.1_eglaixygsk7cbmkras5yrnnona
+  eslint-plugin-prettier: 4.2.1_u5wnrdwibbfomslmnramz52buy
   eslint-plugin-simple-import-sort: 10.0.0_eslint@8.34.0
   eslint-plugin-unused-imports: 2.0.0_eslint@8.34.0
   ethers: 5.7.2
@@ -90,9 +91,10 @@ devDependencies:
   hardhat-gas-reporter: 1.0.9_hardhat@2.12.7
   lodash.snakecase: 4.1.1
   mocha: 10.2.0
-  prettier-plugin-solidity: 1.1.2
+  prettier: 2.8.4
+  prettier-plugin-solidity: 1.1.2_prettier@2.8.4
   solhint: 3.3.8
-  solhint-plugin-prettier: 0.0.5_ztzmh3mfwdvrutfxebf3o4r6s4
+  solhint-plugin-prettier: 0.0.5_5jmvi57qgkoyjwai5p46ba6xom
   solidity-coverage: 0.8.2_hardhat@2.12.7
   solidity-docgen: 0.6.0-beta.34_hardhat@2.12.7
   ts-generator: 0.1.1
@@ -2770,7 +2772,7 @@ packages:
       - typescript
     dev: true
 
-  /eslint-plugin-prettier/4.2.1_eglaixygsk7cbmkras5yrnnona:
+  /eslint-plugin-prettier/4.2.1_u5wnrdwibbfomslmnramz52buy:
     resolution: {integrity: sha512-f/0rXLXUt0oFYs8ra4w49wYZBG5GKZpAYsJSm6rnYL5uVDjd+zowwMwVZHnAjf4edNrKpCDYfXDgmRE/Ak7QyQ==}
     engines: {node: '>=12.0.0'}
     peerDependencies:
@@ -2783,6 +2785,7 @@ packages:
     dependencies:
       eslint: 8.34.0
       eslint-config-prettier: 8.6.0_eslint@8.34.0
+      prettier: 2.8.4
       prettier-linter-helpers: 1.0.0
     dev: true
 
@@ -5228,13 +5231,14 @@ packages:
       fast-diff: 1.2.0
     dev: true
 
-  /prettier-plugin-solidity/1.1.2:
+  /prettier-plugin-solidity/1.1.2_prettier@2.8.4:
     resolution: {integrity: sha512-KC5oNbFJfyBaFiO0kl56J6AXnDmr9tUlBV1iqo864x4KQrKYKaBZvW9jhT2oC0NHoNp7/GoMJNxqL8pp8k7C/g==}
     engines: {node: '>=12'}
     peerDependencies:
       prettier: '>=2.3.0 || >=3.0.0-alpha.0'
     dependencies:
       '@solidity-parser/parser': 0.15.0
+      prettier: 2.8.4
       semver: 7.3.8
       solidity-comments-extractor: 0.0.7
     dev: true
@@ -5814,14 +5818,15 @@ packages:
       - debug
     dev: true
 
-  /solhint-plugin-prettier/0.0.5_ztzmh3mfwdvrutfxebf3o4r6s4:
+  /solhint-plugin-prettier/0.0.5_5jmvi57qgkoyjwai5p46ba6xom:
     resolution: {integrity: sha512-7jmWcnVshIrO2FFinIvDQmhQpfpS2rRRn3RejiYgnjIE68xO2bvrYvjqVNfrio4xH9ghOqn83tKuTzLjEbmGIA==}
     peerDependencies:
       prettier: ^1.15.0 || ^2.0.0
       prettier-plugin-solidity: ^1.0.0-alpha.14
     dependencies:
+      prettier: 2.8.4
       prettier-linter-helpers: 1.0.0
-      prettier-plugin-solidity: 1.1.2
+      prettier-plugin-solidity: 1.1.2_prettier@2.8.4
     dev: true
 
   /solhint/3.3.8:
