@@ -13,15 +13,13 @@
 		"coverage": "hardhat coverage --solcoverjs ./.solcover.js --temp artifacts --testfiles \"test/**/*.ts\" && yarn typechain",
 		"deploy:mumbai": "npx hardhat deploy:LogStore --network mumbai",
 		"lint": "yarn lint:sol && yarn lint:ts && yarn prettier:check",
-		"lint:sol": "solhint --max-warnings 0 \"contracts/**/*.sol\"",
+		"lint:sol": "solhint --max-warnings 0 \"**/*.sol\"",
 		"lint:ts": "eslint --ignore-path ./.eslintignore --ext .js,.ts .",
 		"test": "hardhat test",
 		"typechain": "cross-env TS_NODE_TRANSPILE_ONLY=true hardhat typechain",
-		"format": "prettier --write 'contracts/**/*.sol'"
+		"format": "prettier --write 'src/**/*.sol'"
 	},
-	"files": [
-		"/contracts"
-	],
+	"files": [],
 	"keywords": [
 		"blockchain",
 		"ethers",
@@ -36,9 +34,8 @@
 		"access": "public"
 	},
 	"dependencies": {
-		"@openzeppelin/contracts-upgradeable": "^4.8.1",
-		"dotenv": "^16.0.2",
-		"streamr-contracts": "github://streamr-dev/network-contracts"
+		"@chainlink/contracts": "^0.6.1",
+		"@openzeppelin/contracts-upgradeable": "^4.8.1"
 	},
 	"devDependencies": {
 		"@nomicfoundation/hardhat-chai-matchers": "^1.0.5",
@@ -51,17 +48,31 @@
 		"@typechain/ethers-v5": "^10.2.0",
 		"@typechain/hardhat": "^6.1.5",
 		"@types/chai": "^4.3.4",
+		"@types/lodash.snakecase": "^4.1.7",
 		"@types/mocha": "^10.0.1",
 		"@types/node": "^18.11.18",
 		"chai": "^4.3.7",
 		"cross-env": "^7.0.3",
 		"del-cli": "^5.0.0",
+		"dotenv": "^16.0.3",
+		"eslint": "^8.34.0",
+		"eslint-config-airbnb-base": "^15.0.0",
+		"eslint-config-airbnb-typescript": "^17.0.0",
+		"eslint-config-prettier": "^8.6.0",
+		"eslint-import-resolver-alias": "^1.1.2",
+		"eslint-import-resolver-typescript": "^3.5.3",
+		"eslint-plugin-import": "^2.27.5",
+		"eslint-plugin-jest": "^27.2.1",
+		"eslint-plugin-prettier": "^4.2.1",
+		"eslint-plugin-simple-import-sort": "^10.0.0",
+		"eslint-plugin-unused-imports": "^2.0.0",
 		"ethers": "^5.7.2",
 		"hardhat": "^2.12.6",
 		"hardhat-abi-exporter": "^2.10.1",
 		"hardhat-contract-sizer": "^2.7.0",
 		"hardhat-deploy": "^0.11.22",
 		"hardhat-gas-reporter": "^1.0.9",
+		"lodash.snakecase": "^4.1.1",
 		"mocha": "^10.2.0",
 		"prettier-plugin-solidity": "^1.1.2",
 		"solhint": "^3.3.8",
