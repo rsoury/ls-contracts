@@ -3,15 +3,16 @@
 pragma solidity 0.8.17;
 
 // Open Zeppelin libraries for controlling upgradability and access.
-import "../node_modules/@openzeppelin/contracts-upgradeable/token/ERC20/IERC20Upgradeable.sol";
-import "../node_modules/@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-import "../node_modules/@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
-import "../node_modules/@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
-import "../node_modules/@openzeppelin/contracts-upgradeable/utils/StringsUpgradeable.sol";
+import {IERC20Upgradeable} from "../node_modules/@openzeppelin/contracts-upgradeable/token/ERC20/IERC20Upgradeable.sol";
+import {Initializable} from "../node_modules/@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import {UUPSUpgradeable} from "../node_modules/@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import {OwnableUpgradeable} from "../node_modules/@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import {StringsUpgradeable} from "../node_modules/@openzeppelin/contracts-upgradeable/utils/StringsUpgradeable.sol";
 
-import "./StoreManager.sol";
-import "./QueryManager.sol";
-import "./lib/VerifySignature.sol";
+import {LogStoreManager} from "./StoreManager.sol";
+import {LogStoreQueryManager} from "./QueryManager.sol";
+import {LogStoreReportManager} from "./ReportManager.sol";
+import {VerifySignature} from "./lib/VerifySignature.sol";
 
 contract LogStoreNodeManager is
     Initializable,
@@ -24,12 +25,12 @@ contract LogStoreNodeManager is
         uint indexed isNew,
         uint lastSeen
     );
+    event NodeStakeUpdated(address indexed nodeAddress, uint stake);
     event NodeRemoved(address indexed nodeAddress);
     event NodeWhitelistApproved(address indexed nodeAddress);
     event NodeWhitelistRejected(address indexed nodeAddress);
     event RequiresWhitelistChanged(bool indexed value);
-    event StakeUpdate(uint256 indexed requiredAmount);
-    event ReportUpdated(bool indexed accepted, string raw);
+    event ReportProcessed(string indexed id);
 
     enum WhitelistState {
         None,
@@ -37,44 +38,14 @@ contract LogStoreNodeManager is
         Rejected
     }
 
-    enum Currencies {
-        Kyve,
-        Ar
-    }
-
-    struct Currency {
-        uint256 marketPriceToStable;
-        uint256 marketPriceToStaked;
-        uint256 pricePerByte;
-    }
-
     struct Node {
         uint index; // index of node address
         string metadata; // Connection metadata, for example wss://node-domain-name:port
         uint lastSeen; // what's the best way to store timestamps in smart contracts?
-        uint reputation;
-        uint bytesObserved;
-        uint bytesMissed;
-        uint bytesQueried;
-    }
-
-    struct ReportStream {
-        string id;
-        uint256 observed; // Byte count
-        uint256 missed;
-        uint256 queried;
-    }
-
-    struct ReportNode {
-        address id;
-        ReportStream[] streams;
-    }
-
-    struct Report {
-        string id; // bundle id
-        uint256 height;
-        uint256[2] fees; // Kyve, Ar
-        ReportNode[] nodes;
+        address next;
+        address prev;
+        uint256 stake;
+        address[] delegates;
     }
 
     modifier onlyWhitelist() {
@@ -87,35 +58,35 @@ contract LogStoreNodeManager is
     }
 
     modifier onlyStaked() {
-        require(
-            stakeRequiredAmount > 0 &&
-                balanceOf[msg.sender] >= stakeRequiredAmount,
-            "error_stakeRequired"
-        );
+        require(isStaked(msg.sender), "error_stakeRequired");
         _;
     }
 
     bool public requiresWhitelist;
     uint256 public totalSupply;
+    uint256 public treasurySupply;
     uint256 public stakeRequiredAmount;
-    address public stakeTokenAddress;
-    address[] public nodeAddresses;
-    address[] public reporters;
-    uint256 public lastAcceptedReportBlockHeight;
-    mapping(string => Report) public reports;
     mapping(address => Node) public nodes;
     mapping(address => WhitelistState) public whitelist;
     mapping(address => uint256) public balanceOf;
-    mapping(Currencies => Currency) internal currencyPrice;
+    mapping(address => mapping(address => uint256)) public delegatesOf;
+    address internal headNode;
     IERC20Upgradeable internal stakeToken;
+    uint256 internal writeFeePoints = 10000;
+    uint256 internal treasuryFeePoints = 2000;
+    uint256 internal readFee = 100000000; // 0.0000000001 * 10^18 -- this is relevant to MATIC
     LogStoreManager private _storeManager;
     LogStoreQueryManager private _queryManager;
+    LogStoreReportManager private _reportManager;
 
     function initialize(
         address owner,
         bool requiresWhitelist_,
         address stakeTokenAddress_,
         uint256 stakeRequiredAmount_,
+        uint256 writeFeePoints_,
+        uint256 treasuryFeePoints_,
+        uint256 readFee_,
         address[] memory initialNodes,
         string[] memory initialMetadata
     ) public initializer {
@@ -127,25 +98,39 @@ contract LogStoreNodeManager is
             "error_badTrackerData"
         );
         require(
-            stakeTokenAddress != address(0) && stakeRequiredAmount_ > 0,
+            stakeTokenAddress_ != address(0) && stakeRequiredAmount_ > 0,
             "error_badTrackerData"
         );
         stakeToken = IERC20Upgradeable(stakeTokenAddress_);
-        stakeTokenAddress = stakeTokenAddress_;
-        stakeRequiredAmount = stakeRequiredAmount_;
+
+        // Configure
+        configure(
+            stakeRequiredAmount_,
+            writeFeePoints_,
+            treasuryFeePoints_,
+            readFee_
+        );
+
         for (uint i = 0; i < initialNodes.length; i++) {
             upsertNodeAdmin(initialNodes[i], initialMetadata[i]);
         }
         transferOwnership(owner);
     }
 
+    function configure(
+        uint256 stakeRequiredAmount_,
+        uint256 writeFeePoints_,
+        uint256 treasuryFeePoints_,
+        uint256 readFee_
+    ) public onlyOwner {
+        stakeRequiredAmount = stakeRequiredAmount_;
+        writeFeePoints = writeFeePoints_;
+        treasuryFeePoints = treasuryFeePoints_;
+        readFee = readFee_;
+    }
+
     /// @dev required by the OZ UUPS module
     function _authorizeUpgrade(address) internal override onlyOwner {}
-
-    function updateStakeRequiredAmount(uint256 amount) public onlyOwner {
-        stakeRequiredAmount = amount;
-        emit StakeUpdate(amount);
-    }
 
     function registerStoreManager(address contractAddress) public onlyOwner {
         _storeManager = LogStoreManager(contractAddress);
@@ -153,6 +138,10 @@ contract LogStoreNodeManager is
 
     function registerQueryManager(address contractAddress) public onlyOwner {
         _queryManager = LogStoreQueryManager(contractAddress);
+    }
+
+    function registerReportManager(address contractAddress) public onlyOwner {
+        _reportManager = LogStoreReportManager(contractAddress);
     }
 
     function upsertNodeAdmin(
@@ -166,239 +155,14 @@ contract LogStoreNodeManager is
         _removeNode(nodeAddress);
     }
 
-    // TODO: Update only access the funds in treasury
     function treasuryWithdraw(uint256 amount) public onlyOwner {
-        require(
-            amount <= stakeToken.balanceOf(address(this)),
-            "error_notEnoughStake"
-        );
-        bool success = stakeToken.transfer(msg.sender, amount);
-        require(success == true, "error_unsuccessfulWithdraw");
-    }
+        require(amount <= treasurySupply, "error_notEnoughStake");
 
-    function upsertNode(
-        string memory metadata_
-    ) public onlyWhitelist onlyStaked {
-        _upsertNode(msg.sender, metadata_);
-    }
-
-    function removeNode() public {
-        _removeNode(msg.sender);
-    }
-
-    function join(uint amount, string memory metadata_) public {
-        stake(amount);
-        upsertNode(metadata_);
-    }
-
-    function leave() public {
-        withdraw(balanceOf[msg.sender]);
-        removeNode();
-    }
-
-    // recieve report data broken up into a series of arrays
-    function report(
-        string calldata bundleId,
-        string calldata blockHeight,
-        uint256[2] calldata fees,
-        address[] calldata addresses,
-        string[][] calldata streamsPerNode,
-        uint256[][] calldata bytesObservedPerStream,
-        uint256[][] calldata bytesMissedPerStream,
-        uint256[][] calldata bytesQueriedPerStream,
-        bytes[] calldata signatures // these are signatures of the constructed payload.
-    ) public onlyStaked {
-        if (reporters.length == 0) {
-            // A condition that will be true on the first report
-            reporters = nodeAddresses;
-        }
-        // TODO: Ensure msg.sender is the next reporter.
-
-        ReportNode[] memory reportNodes = new ReportNode[](addresses.length);
-        for (uint256 i = 0; i < addresses.length; i++) {
-            ReportStream[] memory reportStreamsPerNode = new ReportStream[](
-                streamsPerNode[i].length
-            );
-            for (uint256 j = 0; j < addresses.length; j++) {
-                reportStreamsPerNode[j] = ReportStream({
-                    id: streamsPerNode[i][j],
-                    observed: bytesObservedPerStream[i][j],
-                    missed: bytesMissedPerStream[i][j],
-                    queried: bytesQueriedPerStream[i][j]
-                });
-            }
-            reportNodes[i] = ReportNode({
-                id: addresses[i],
-                streams: reportStreamsPerNode
-            });
-        }
-        // Consume report data
-        uint256 currentHeight = block.number;
-        Report memory currentReport = Report({
-            id: bundleId,
-            height: currentHeight,
-            fees: fees,
-            nodes: reportNodes
-        });
-        // Produce json blob that signatures correspond to
-        string memory nodesJson = "";
-        for (uint256 i = 0; i < addresses.length; i++) {
-            string memory formattedStreams = "";
-            for (uint256 j = 0; j < streamsPerNode[i].length; j++) {
-                formattedStreams = string.concat(
-                    formattedStreams,
-                    '{ "id": "',
-                    streamsPerNode[i][j],
-                    '", "observed": ',
-                    StringsUpgradeable.toString(bytesObservedPerStream[i][j]),
-                    ', "missed": ',
-                    StringsUpgradeable.toString(bytesMissedPerStream[i][j]),
-                    ', "queried": ',
-                    StringsUpgradeable.toString(bytesQueriedPerStream[i][j]),
-                    " }"
-                );
-                if (j != streamsPerNode[i].length - 1) {
-                    formattedStreams = string.concat(formattedStreams, ",");
-                }
-            }
-            nodesJson = string.concat(
-                nodesJson,
-                '{ "address": "',
-                StringsUpgradeable.toHexString(addresses[i]),
-                '", "streams": "[',
-                formattedStreams,
-                ']"}'
-            );
-            if (i != addresses.length - 1) {
-                nodesJson = string.concat(nodesJson, ",");
-            }
-        }
-        string memory reportJson = string.concat(
-            '{ "bundleId": "',
-            bundleId,
-            '", "height": "',
-            blockHeight,
-            '", "fees": {"kyve": "',
-            StringsUpgradeable.toString(fees[0]),
-            '", "ar": "',
-            StringsUpgradeable.toString(fees[1]),
-            '"}", "nodes": [',
-            nodesJson,
-            "]"
-        );
-        bytes32 reportHash = keccak256(abi.encodePacked(reportJson));
-        // Verify signatures
-        bool accepted = true;
-        for (uint256 i = 0; i < addresses.length; i++) {
-            bool verified = VerifySignature.verify(
-                addresses[i],
-                reportHash,
-                signatures[i]
-            );
-            if (verified != true) {
-                accepted = false;
-                break;
-            }
-        }
-
-        if (accepted) {
-            reports[currentReport.id] = currentReport;
-
-            // Determine fee amounts on a per stream basis
-            string[] memory captureStreamIds = new string[](0);
-            mapping(string => uint256) memory captureAmounts;
-            mapping(string => uint256) memory captureBytesStored;
-            mapping(string => bool) memory captured;
-            for (uint256 i = 0; i < currentReport.nodes.length; i++) {
-                ReportNode memory reportNode = currentReport.nodes[i];
-                for (uint256 j = 0; j < reportNode.streams.length; i++) {
-                    ReportStream memory reportStream = reportNode.streams[i];
-                    // TODO: Insert Pricing Algorithm
-                    if (captured[reportStream.id] == false) {
-                        captureStreamIds.push(reportStream.id);
-                        captured[reportStream.id] = true;
-                    }
-
-                    uint256 amount = reportStream.observed *
-                        currencyPrice[Currencies.Ar] *
-                        captureAmounts[reportStream.id] =
-                        captureAmounts[reportStream.id] +
-                        amount;
-                }
-            }
-            // Reproduce ReportList based on the performance of each node.
-
-            // Capture fees from LogStoreManager
-            _storeManager.captureBundle(
-                captureStreamIds,
-                captureAmounts,
-                captureBytesStored
-            );
-        }
-
-        emit ReportUpdated(accepted, reportJson);
-    }
-
-    function stake(uint amount) public {
-        require(amount > 0, "error_insufficientStake");
-
-        balanceOf[msg.sender] += amount;
-        totalSupply += amount;
-
-        bool success = stakeToken.transferFrom(
-            msg.sender,
-            address(this),
-            amount
-        );
-        require(success == true, "error_unsuccessfulStake");
-    }
-
-    function withdraw(uint amount) public {
-        require(amount <= balanceOf[msg.sender], "error_notEnoughStake");
-
-        balanceOf[msg.sender] -= amount;
         totalSupply -= amount;
+        treasurySupply -= amount;
 
         bool success = stakeToken.transfer(msg.sender, amount);
         require(success == true, "error_unsuccessfulWithdraw");
-    }
-
-    function _upsertNode(
-        address nodeAddress,
-        string memory metadata_
-    ) internal {
-        Node memory n = nodes[nodeAddress];
-        uint isNew = 0;
-        if (n.lastSeen == 0) {
-            isNew = 1;
-            nodeAddresses.push(nodeAddress);
-            nodes[nodeAddress] = Node({
-                index: nodeAddresses.length - 1,
-                metadata: metadata_,
-                lastSeen: block.timestamp // block timestamp should suffice
-            });
-        } else {
-            nodes[nodeAddress] = Node({
-                index: n.index,
-                metadata: metadata_,
-                lastSeen: block.timestamp
-            });
-        }
-        emit NodeUpdated(nodeAddress, n.metadata, isNew, n.lastSeen);
-    }
-
-    function _removeNode(address nodeAddress) internal {
-        Node memory n = nodes[nodeAddress];
-        require(n.lastSeen != 0, "error_notFound");
-        nodes[nodeAddresses[nodeAddresses.length - 1]].index = n.index; // set index of last node to the index of removed node
-        nodeAddresses[n.index] = nodeAddresses[nodeAddresses.length - 1]; // replace removed node with last node
-        delete nodes[nodeAddress];
-        nodeAddresses.pop();
-        emit NodeRemoved(nodeAddress);
-    }
-
-    function nodeCount() public view returns (uint count) {
-        return nodeAddresses.length;
     }
 
     function whitelistApproveNode(address nodeAddress) public onlyOwner {
@@ -421,9 +185,301 @@ contract LogStoreNodeManager is
         emit RequiresWhitelistChanged(value);
     }
 
-    function getStorageFee(uint256 bytesStored) public returns (uint256 fee) {
-        // Need to get the KYVE/STAKE_TOKEN & AR/STAKE_TOKEN prices
+    // recieve report data broken up into a series of arrays
+    function processReport(string calldata id) public onlyStaked {
+        LogStoreReportManager.Report memory report = _reportManager.getReport(
+            id
+        );
+
+        require(report._processed == false, "error_reportAlreadyProcessed");
+
+        // Determine fee amounts on a per stream basis
+        // 1. Take the total fees/expense, priced in staked currency, and evaluate a fee per stored byte (observed + missed)
+        // 2. Fee per stored byte is a multiplier on the fees/expense that incorporates the Treasury delegation
+        uint256 writeExpense = report.fee / report._write;
+        uint256 writeFee = (writeFeePoints / 10000 + 1) * writeExpense;
+        uint256 writeTreasuryFee = (treasuryFeePoints / 10000) *
+            (writeFee - writeExpense);
+        uint256 writeNodeFee = writeFee - writeTreasuryFee;
+        uint256 readTreasuryFee = readFee * (treasuryFeePoints / 10000);
+        uint256 readNodeFee = readFee - readTreasuryFee;
+
+        for (uint256 i = 0; i < report.streams.length; i++) {
+            // Capture fees from LogStoreManager
+            // Once captured, partition between node and treasury
+            uint256 writeCapture = report.streams[i]._write * writeFee;
+            _storeManager.capture(
+                report.streams[i].id,
+                writeCapture,
+                report.streams[i]._write
+            );
+            totalSupply += writeCapture;
+
+            for (uint256 j = 0; j < report.streams.length; j++) {
+                uint256 readCapture = report.streams[i].queried[j] * readFee;
+                _queryManager.capture(
+                    report.streams[i].id,
+                    readCapture,
+                    report.streams[i].consumers[j],
+                    report.streams[i].queried[j]
+                );
+                totalSupply += readCapture;
+            }
+
+            // Allocate treasury write fees
+            treasurySupply +=
+                (report.streams[i]._write * writeTreasuryFee) +
+                (report.streams[i]._read * readTreasuryFee);
+            // Allocate node write fees
+            // To do so, we need to determine the portions allocated to each node proportional to their performance
+            for (uint256 j = 0; j < report.streams[i].nodes.length; j++) {
+                uint256 portion = report.streams[i].nodes[j].observed /
+                    report.streams[i]._write;
+                uint256 penalty = report.streams[i].nodes[j].missed /
+                    report.streams[i]._write;
+                uint256 nodeCapturePortion = 0;
+                if (portion > penalty) {
+                    // Penalise nodes for missing writes
+                    nodeCapturePortion =
+                        (portion - penalty) *
+                        report.streams[i]._write *
+                        writeNodeFee;
+                }
+
+                // Determine which balances to allocate this capture portion to
+                for (
+                    uint256 x = 0;
+                    x < nodes[report.streams[i].nodes[j].id].delegates.length;
+                    x++
+                ) {
+                    address nodeDelegate = nodes[report.streams[i].nodes[j].id]
+                        .delegates[x];
+                    uint256 delegateAmount = delegatesOf[nodeDelegate][
+                        report.streams[i].nodes[j].id
+                    ];
+                    uint256 delegatePortion = delegateAmount /
+                        nodes[report.streams[i].nodes[j].id].stake;
+                    uint256 delegateCapturePortion = delegatePortion *
+                        nodeCapturePortion;
+                    delegatesOf[nodeDelegate][
+                        report.streams[i].nodes[j].id
+                    ] += delegateCapturePortion;
+                }
+
+                // Allocate node read fees
+                uint256 nodeCaptureQueryPortion = (report
+                    .streams[i]
+                    .nodes[j]
+                    .queried / report.streams[i]._read) *
+                    (report.streams[i]._write * readNodeFee);
+
+                nodes[report.streams[i].nodes[j].id].stake +=
+                    nodeCapturePortion +
+                    nodeCaptureQueryPortion;
+
+                treasurySupply +=
+                    penalty *
+                    report.streams[i]._write *
+                    writeNodeFee;
+            }
+        }
+
+        _reportManager.processReport(id);
+        emit ReportProcessed(id);
     }
 
-    function getQueryFee(uint256 bytesQueried) public returns (uint256 fee) {}
+    // Nodes can join the network, but they will not earn rewards or participate unless they're staked.
+    function upsertNode(string memory metadata_) public onlyWhitelist {
+        _upsertNode(msg.sender, metadata_);
+    }
+
+    function removeNode() public {
+        _removeNode(msg.sender);
+    }
+
+    function join(uint amount, string memory metadata_) public {
+        stake(amount);
+        delegate(amount, msg.sender);
+        upsertNode(metadata_);
+    }
+
+    function leave() public {
+        withdraw(balanceOf[msg.sender]);
+        removeNode();
+    }
+
+    function stake(uint amount) public {
+        require(amount > 0, "error_insufficientStake");
+
+        balanceOf[msg.sender] += amount;
+        totalSupply += amount;
+
+        bool success = stakeToken.transferFrom(
+            msg.sender,
+            address(this),
+            amount
+        );
+        require(success == true, "error_unsuccessfulStake");
+    }
+
+    function delegate(uint amount, address node) public onlyStaked {
+        require(amount > 0, "error_insufficientDelegateAmount");
+        require(nodes[node].lastSeen > 0, "error_invalidNode");
+
+        balanceOf[msg.sender] -= amount;
+        delegatesOf[msg.sender][node] += amount;
+        nodes[node].stake += amount;
+
+        bool delegateExists = false;
+        for (uint256 i = 0; i < nodes[node].delegates.length; i++) {
+            if (msg.sender == nodes[node].delegates[i]) {
+                delegateExists = true;
+                break;
+            }
+        }
+        if (!delegateExists) {
+            nodes[node].delegates.push(msg.sender);
+        }
+
+        emit NodeStakeUpdated(node, nodes[node].stake);
+    }
+
+    function undelegate(uint amount, address node) public onlyStaked {
+        require(amount > 0, "error_insufficientDelegateAmount");
+        require(nodes[node].lastSeen > 0, "error_invalidNode");
+
+        delegatesOf[msg.sender][node] -= amount;
+        nodes[node].stake -= amount;
+        balanceOf[msg.sender] += amount;
+
+        uint256 removeIndex = 0;
+        for (uint256 i = 0; i < nodes[node].delegates.length; i++) {
+            if (msg.sender == nodes[node].delegates[i]) {
+                removeIndex = i;
+                break;
+            }
+        }
+        nodes[node].delegates[removeIndex] = nodes[node].delegates[
+            nodes[node].delegates.length - 1
+        ];
+        nodes[node].delegates.pop();
+
+        emit NodeStakeUpdated(node, nodes[node].stake);
+    }
+
+    function delegateStake(uint amount, address node) public {
+        stake(amount);
+        delegate(amount, node);
+    }
+
+    function withdraw(uint amount) public {
+        require(amount <= balanceOf[msg.sender], "error_notEnoughStake");
+
+        balanceOf[msg.sender] -= amount;
+        totalSupply -= amount;
+
+        bool success = stakeToken.transfer(msg.sender, amount);
+        require(success == true, "error_unsuccessfulWithdraw");
+    }
+
+    function undelegateWithdraw(uint amount, address node) public {
+        undelegate(amount, node);
+        withdraw(amount);
+    }
+
+    function _upsertNode(
+        address nodeAddress,
+        string memory metadata_
+    ) internal {
+        Node memory n = nodes[nodeAddress];
+        uint isNew = 0;
+        if (n.lastSeen == 0) {
+            isNew = 1;
+
+            Node memory newNode;
+            newNode.metadata = metadata_;
+            newNode.lastSeen = block.timestamp; // block timestamp should suffice
+
+            if (headNode == address(0)) {
+                headNode = nodeAddress;
+            } else {
+                uint256 index = 0;
+                address tailAddress = headNode;
+                while (nodes[tailAddress].next != address(0)) {
+                    tailAddress = nodes[tailAddress].next;
+                    index++;
+                }
+                nodes[nodeAddress].prev = tailAddress;
+                nodes[tailAddress].next = nodeAddress;
+                nodes[nodeAddress].index = nodes[tailAddress].index++;
+            }
+        } else {
+            nodes[nodeAddress] = Node({
+                index: n.index,
+                next: n.next,
+                prev: n.prev,
+                metadata: metadata_,
+                lastSeen: block.timestamp,
+                stake: n.stake,
+                delegates: new address[](0)
+            });
+        }
+        emit NodeUpdated(nodeAddress, n.metadata, isNew, n.lastSeen);
+    }
+
+    function _removeNode(address nodeAddress) internal {
+        Node memory n = nodes[nodeAddress];
+        require(n.lastSeen != 0, "error_notFound");
+
+        // Delete before loop as to no conflict
+        delete nodes[nodeAddress];
+
+        nodes[n.next].prev = n.prev;
+        if (headNode == nodeAddress) {
+            headNode = n.next;
+        }
+
+        address tailAddress = n.next;
+        do {
+            nodes[tailAddress].index--;
+            tailAddress = nodes[tailAddress].next;
+        } while (tailAddress != address(0));
+
+        emit NodeRemoved(nodeAddress);
+    }
+
+    function nodeAddresses()
+        public
+        view
+        returns (address[] memory resultAddresses)
+    {
+        uint256 totalNodes = nodeCount();
+        address[] memory result = new address[](totalNodes);
+
+        address tailAddress = nodes[headNode].next;
+        for (uint256 i = 0; i < totalNodes; i++) {
+            result[i] = tailAddress;
+        }
+
+        return result;
+    }
+
+    function nodeCount() public view returns (uint) {
+        uint256 index = 0;
+        address tailAddress = headNode;
+        while (nodes[tailAddress].next != address(0)) {
+            tailAddress = nodes[tailAddress].next;
+            index++;
+        }
+        return index + 1;
+    }
+
+    function nodeStake(address node) public view returns (uint256) {
+        return nodes[node].stake;
+    }
+
+    function isStaked(address node) public view returns (bool) {
+        return
+            stakeRequiredAmount > 0 && nodes[node].stake >= stakeRequiredAmount;
+    }
 }

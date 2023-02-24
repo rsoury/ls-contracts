@@ -3,12 +3,12 @@
 pragma solidity 0.8.17;
 
 // Open Zeppelin libraries for controlling upgradability and access.
-import "../node_modules/@openzeppelin/contracts-upgradeable/token/ERC20/IERC20Upgradeable.sol";
-import "../node_modules/@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-import "../node_modules/@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
-import "../node_modules/@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import {IERC20Upgradeable} from "../node_modules/@openzeppelin/contracts-upgradeable/token/ERC20/IERC20Upgradeable.sol";
+import {Initializable} from "../node_modules/@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import {UUPSUpgradeable} from "../node_modules/@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import {OwnableUpgradeable} from "../node_modules/@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 
-import "./interfaces/StreamRegistry.sol";
+import {IStreamRegistry} from "./interfaces/StreamRegistry.sol";
 
 // Owned by the NodeManager Contract
 contract LogStoreManager is Initializable, UUPSUpgradeable, OwnableUpgradeable {
@@ -66,7 +66,7 @@ contract LogStoreManager is Initializable, UUPSUpgradeable, OwnableUpgradeable {
         string memory streamId,
         uint256 amount,
         uint256 bytesStored
-    ) public onlyOwner {
+    ) public onlyOwner returns (bool success) {
         require(
             amount <= stakeToken.balanceOf(address(this)),
             "error_notEnoughStake"
@@ -93,10 +93,12 @@ contract LogStoreManager is Initializable, UUPSUpgradeable, OwnableUpgradeable {
         stores[streamId] -= amount;
         totalSupply -= amount;
 
-        bool success = stakeToken.transfer(msg.sender, amount);
-        require(success == true, "error_unsuccessfulCapture");
+        bool transferSuccess = stakeToken.transfer(msg.sender, amount);
+        require(transferSuccess == true, "error_unsuccessfulCapture");
 
         emit DataStored(streamId, amount, bytesStored);
+
+        return transferSuccess;
     }
 
     function stake(string memory streamId, uint amount) public {
@@ -122,27 +124,5 @@ contract LogStoreManager is Initializable, UUPSUpgradeable, OwnableUpgradeable {
         storeBalanceOf[msg.sender][streamId] += amount;
         totalSupply += amount;
         emit StoreUpdated(streamId, isNew, amount, msg.sender);
-    }
-
-    function withdraw(string memory streamId, uint amount) public {
-        require(amount < balanceOf[msg.sender], "error_notEnoughStake");
-
-        stores[streamId] -= amount;
-        balanceOf[msg.sender] -= amount;
-        storeBalanceOf[msg.sender][streamId] -= amount;
-        if (storeBalanceOf[msg.sender][streamId] == 0) {
-            address[] memory stakeholders = storeStakeholders[streamId];
-            storeStakeholders[streamId] = new address[](0);
-            for (uint256 i = 0; i < stakeholders.length; i++) {
-                if (stakeholders[i] != msg.sender) {
-                    storeStakeholders[streamId].push(msg.sender);
-                }
-            }
-        }
-        totalSupply -= amount;
-
-        bool success = stakeToken.transfer(msg.sender, amount);
-        require(success == true, "error_unsuccessfulWithdraw");
-        emit StoreUpdated(streamId, false, amount, msg.sender);
     }
 }
